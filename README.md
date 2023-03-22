@@ -315,10 +315,10 @@ a->next = <uninitialized value>
 # Build Instructions
 
 ```bash
-git clone https://github.com/COMP1511UNSW/dcc
+git clone https://github.com/muditbhargava66/dcc-unsw-nyu.git
 cd dcc
 make
-cp -p ./dcc /usr/local/bin/dcc
+sudo make install
 ```
 
 # Compilation Diagram
