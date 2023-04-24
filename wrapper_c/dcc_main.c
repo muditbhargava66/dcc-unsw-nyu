@@ -96,6 +96,7 @@ int __wrap_main(int argc, char *argv[], char *envp[]) {
 		setenvd("DCC_BINARY", mypath);
 		free(mypath);
 	}
+	__SET_EMBEDDED_ENVIRONMENT_VARIABLES__
 	return __dcc_run_sanitizer1(argc, argv);
 }
 #else
@@ -115,7 +116,9 @@ int __wrap_main(int argc, char *argv[], char *envp[]) {
 	init_cookies();
 	clear_stack();
 	extern char **environ;
-	exit(__real_main(argc, argv, environ));
+	int r = __real_main(argc, argv, environ);
+	debug_printf(2, "__real_main returning %d\n", r);
+	exit(r);
 	return 1; // not reached
 }
 
@@ -135,6 +138,7 @@ int __wrap_main(int argc, char *argv[], char *envp[]) {
 		setenvd("DCC_BINARY", mypath);
 		free(mypath);
 	}
+	__SET_EMBEDDED_ENVIRONMENT_VARIABLES__
 	debug_stream = stderr;
 	if (pipe(to_sanitizer2_pipe) != 0) {
 		debug_printf(1, "pipe failed");

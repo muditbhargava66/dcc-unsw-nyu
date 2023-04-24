@@ -1,4 +1,4 @@
-import re, sys
+import json, os, re, subprocess, sys
 import colors
 from compiler_explanations import get_explanation
 
@@ -9,12 +9,12 @@ def explain_compiler_output(output, args):
     lines = output.splitlines()
     explanations_made = set()
     errors_explained = 0
-    last_message = None
+    messages = []
+    explanations = []
     if args.colorize_output:
         color = colors.color
     else:
         color = lambda text, color_name: text
-
     while lines and (
         not errors_explained or len(explanations_made) < args.max_explanations
     ):
@@ -26,9 +26,9 @@ def explain_compiler_output(output, args):
             continue
 
         if (
-            last_message
-            and message.is_same_line(last_message)
-            and (last_message.type == "error" or message.type == "warning")
+            messages
+            and message.is_same_line(messages[-1])
+            and (messages[-1].type == "error" or message.type == "warning")
         ):
             # skip if there are two errors for one line
             # often the second message is unhelpful
@@ -65,7 +65,7 @@ def explain_compiler_output(output, args):
                 message.note = []
                 message.note_without_ansi_codes = []
 
-        last_message = message
+        messages.append(message)
 
         if args.debug:
             print(
@@ -91,37 +91,46 @@ def explain_compiler_output(output, args):
             text += ANSI_DEFAULT
         print(text, file=sys.stderr)
 
+        # remove any reference to specific line and check if we've already made this explanation
+        if explanation_text:
+            e = re.sub("line.*", "", explanation_text, flags=re.I)
+            if e in explanations_made:
+                continue
+            explanations_made.add(e)
+
+            prefix = color("dcc explanation:", "cyan")
+            print(prefix, explanation_text, file=sys.stderr)
+            if message.type == "error":
+                errors_explained += 1
+
+        if explanation:
+            explanations.append(explanation)
+
+        if run_compile_time_helper(message, args):
+            break
+
         if not explanation_text:
             continue  # should we give up when we get a message for which we don't have an explanation?
 
-        # remove any reference to specific line and check if we've already made this explanation
-        e = re.sub("line.*", "", explanation_text, flags=re.I)
-        if e in explanations_made:
-            continue
-        explanations_made.add(e)
-
-        if message.type == "error":
-            errors_explained += 1
-
-        prefix = color("dcc explanation:", "cyan")
-        print(prefix, explanation_text, file=sys.stderr)
-
-        if explanation and explanation.no_following_explanations:
+        if explanation.no_following_explanations:
             if args.debug:
                 print(
                     "printing no further compiler messages because explanation.no_following_explanations set"
                 )
             break
+
     if lines and lines[-1].endswith(" generated."):
         lines[-1] = re.sub(r"\d .*", "", lines[-1])
 
     # if we explained 1 or more errors, don't output any remaining compiler output
-    # often its confusing parasitic errors
+    # as often it is confusing parasitic errors
     #
     # if we didn't explain any messages, just pass through all compiler output
     #
     if not errors_explained:
         print("\n".join(lines), file=sys.stderr)
+
+    return explanations
 
 
 class Message:
@@ -223,3 +232,46 @@ def convert_smart_quotes_to_dumb_quotes(string):
     string = string.replace("\u201C", '"')
     string = string.replace("\u201D", '"')
     return string
+
+
+def run_compile_time_helper(message, args):
+    """
+    run a helper script to handle a compiler message
+    return True indicates no more compiler messages should be printed
+    """
+    if not args.compile_helper:
+        return False
+
+    message_text = "\n".join(message.text_without_ansi_codes)
+    explanation = get_explanation(message, lambda text, color_name: text)
+    explanation_text = explanation.text.rstrip("\n") if explanation else ""
+    explanation_label = explanation.label if explanation else ""
+
+    helper_info = {
+        "compiler_message": message_text,
+        "message_type": message.type,
+        "filename": message.file,
+        "line_number": str(message.line_number),
+        "column": str(message.column),
+        "explanation": explanation_text,
+        "explanation_label": explanation_label,
+    }
+
+    if args.debug:
+        print(
+            f"run_compile_time_helper helper='{args.compile_helper} info='{helper_info}'"
+        )
+
+    for k, v in helper_info.items():
+        os.environ["DCC_HELPER_" + k.upper()] = v
+    os.environ["DCC_HELPER_JSON"] = json.dumps(helper_info, separators=(",", ":"))
+
+    if args.debug:
+        print(f"running {args.compile_helper}")
+    try:
+        p = subprocess.run([args.compile_helper])
+        return p.returncode == 0
+    except OSError as e:
+        if args.debug:
+            print(e)
+    return False
